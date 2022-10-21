@@ -3,7 +3,6 @@
 #include <fstream>
 
 
-
 void print_hex(char test[], uint64_t binary) {
     
     printf("This is `%s`: %lX\n", test, binary);
@@ -258,24 +257,124 @@ void startup(char data_location[], char key_location[], char output_location[], 
     fclose(outF);
     fclose(dataF);
 }
+
+#define BUFFER 1 << 16
+
+void startup2(const char data_location[], const char key_location[], 
+    const char output_location[], const char output_hex_location[], bool encrypt) {
+
+    FILE* keyF = fopen(key_location, "r");
+    if(keyF == nullptr) {
+        printf("Couldn't read key\n");
+        return;
+    };
+    uint64_t key = 0;
+    fscanf(keyF, "%lx", &key);
+    fclose(keyF);
+
+    generate_keys(key);
+
+    uint64_t data_chunk = 0;
+    FILE* dataF = fopen(data_location, "rb");
+
+    if(dataF == nullptr) {
+        printf("Couldn't read data\n");
+        return;
+    };
+
+    
+    FILE* outHex = fopen(output_hex_location, "w");
+    char read_buffer[BUFFER];
+    char write_buffer[BUFFER];
+    while(true) {
+        clock_t start_outer = clock();
+        int read_size = fread(read_buffer, 1, BUFFER, dataF);
+        printf("size %i\n", read_size);
+        if(read_size == 0) break;
+        for(int i = 0; i < read_size / 16; i++) {
+            sscanf(read_buffer+ i * 16, "%16c", &data_chunk);
+            printf("Something %lx\n", data_chunk);
+            uint64_t res = mutate_data(data_chunk, encrypt);
+            sprintf(write_buffer + i * 16, "%016lx", res);
+        }
+        fwrite(write_buffer, 1, read_size, outHex);
+    }
+    printf("Operation Done!\n");
+    fclose(outHex);
+    fclose(dataF);
+}
+
+
+
+// uint64_t toHex(char in[], int start) {
+//     uint64_t hex = 0;
+//     for(int i = 0; i < 16; ++i) {
+//         char cur = in[i + start];
+//         char convert = 0;
+//         if(cur >= '0' && cur <= '9') convert = (cur - '0');
+//         else if (cur >= 'a' && cur <= 'f') convert = (cur - 'a' + 10);
+//         else if (cur >= 'A' && cur <= 'F') convert = (cur - 'A' + 10);
+//         hex = (hex << 4) | convert;
+//     }
+//     return hex;
+// }
+// void startup3(const char data_location[], const char key_location[], const char output_enc_location[], bool encrypt) {
+
+//     FILE* keyF = fopen(key_location, "r");
+//     if(keyF == nullptr) {
+//         printf("Couldn't read key\n");
+//         return;
+//     };
+//     uint64_t key = 0;
+//     fscanf(keyF, "%lx", &key);
+//     fclose(keyF);
+
+//     generate_keys(key);
+
+//     uint64_t data_chunk = 0;
+//     FILE* dataF = fopen(data_location, "rb");
+
+//     if(dataF == nullptr) {
+//         printf("Couldn't read data\n");
+//         return;
+//     };
+
+    
+//     FILE* outF = fopen(output_location, "w");
+//     char read_buffer[BUFFER];
+//     char write_buffer[BUFFER];
+//     while(true) {
+//         clock_t start_outer = clock();
+//         int read_size = fread(read_buffer, 1, BUFFER, dataF);
+//         if(read_size == 0) break;
+//         for(int i = 0; i < read_size / 16; i++) {
+//             clock_t start_in = clock();
+//             data_chunk = toHex(read_buffer, i * 16);
+//             clock_t start = clock();
+//             uint64_t res = mutate_data(data_chunk, encrypt);
+//             clock_t end = clock();
+//             // printf("Time  mutate taken of mutate %lf\n", (float)(end - start) / CLOCKS_PER_SEC);
+//             sprintf(write_buffer + i * 16, "%016lx", res);
+//             clock_t end_in = clock();
+//             // printf("Time  inner loop %lf\n", (float)(end_in - start_in) / CLOCKS_PER_SEC);
+//         }
+//         fwrite(write_buffer, 1, read_size, outF);
+//         clock_t end_outer = clock();
+//         printf("Time  outer loop ------------------------------- %lf\n", (float)(end_outer - start_outer) / CLOCKS_PER_SEC);
+//     }
+//     printf("Operation Done!\n");
+//     fclose(outF);
+//     fclose(dataF);
+// }
 #include <string.h>
 int main(int argc, char* argv[]) {
 
-    if(argc < 4) {
-        printf("Not enough arguments!");
-        return 0;
-    }
-    char* data = argv[1];
-    char* key = argv[2];
-    char* encrypt = argv[3];
-    char out[] = "./out.txt";
-    startup(data, key, out, strcmp(encrypt, "encrypt") == 0);
-    // uint64_t key = 0xab7857564cdfFFFF;
-    // print_hex("Key", key);
-    // print_hex("Plain text", plain_text);
-
-    // generate_keys(key);
-    // uint64_t out = mutate_data(plain_text, 1);
-    // print_hex("Final encrypt", out);
-    // print_hex("Final dec", mutate_data(out, 0));
+    const char* encrypt = (argc >= 2) ? argv[1] : "encrypt";
+    const char* data = (argc >= 3) ? argv[2] : "plain.txt";
+    const char* key = (argc >= 4) ? argv[3] : "key.txt";
+    const char encrypted_out[] = "encrypted.txt";
+    const char decrypted_out[] = "decrypt.txt";
+    const char hex_out[] = "hex.txt";
+    bool isEncrypt = strcmp(encrypt, "encrypt") == 0;
+    startup2(data, key, (isEncrypt) ? encrypted_out : decrypted_out, hex_out, isEncrypt);
 }
