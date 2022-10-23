@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <fstream>
 
+#include <chrono>
+using std::chrono::high_resolution_clock;
+    using std::chrono::duration_cast;
+    using std::chrono::duration;
+    using std::chrono::milliseconds;
 
 void print_hex(char test[], uint64_t binary) {
     
@@ -258,11 +263,29 @@ void startup(char data_location[], char key_location[], char output_location[], 
     fclose(dataF);
 }
 
-#define BUFFER 1 << 16
+#define BUFFER 1 << 21
+
+unsigned char inner_buffer[8];
+int read64(uint64_t& data, FILE* file) {
+    int size = fread(inner_buffer, 1, 8, file);
+    data = 0;
+    for (size_t i = 0; i < 8; i++) {
+        data = ( data << 8 ) | (inner_buffer[i] & 0xFF);
+    }
+    return size;
+}
+
+void inverse(uint64_t& data) {
+    uint64_t rev = 0;
+    for(int i = 0; i < 8; ++i) {
+        rev = (rev << 8) | (data & 0xFF);
+        data = data >> 8;
+    }
+    data = rev;
+}
 
 void startup2(const char data_location[], const char key_location[], 
     const char output_location[], const char output_hex_location[], bool encrypt) {
-
     FILE* keyF = fopen(key_location, "r");
     if(keyF == nullptr) {
         printf("Couldn't read key\n");
@@ -272,6 +295,8 @@ void startup2(const char data_location[], const char key_location[],
     fscanf(keyF, "%lx", &key);
     fclose(keyF);
 
+    char write_buffer[1 << 18];
+    char read_buffer[1 << 12];
     generate_keys(key);
 
     uint64_t data_chunk = 0;
@@ -282,93 +307,50 @@ void startup2(const char data_location[], const char key_location[],
         return;
     };
 
-    
-    FILE* outHex = fopen(output_hex_location, "w");
-    char read_buffer[BUFFER];
-    char write_buffer[BUFFER];
+    double mutuate_time = 0;
+    double read_time = 0;
+    double write_time = 0;
+
+    // FILE* outHex = fopen(output_hex_location, "w");
+    FILE* outAs = fopen(output_location, "wb");
+    setvbuf(outAs, write_buffer, _IOFBF, 1 << 18);
+    setvbuf(dataF, read_buffer, _IOFBF, 1 << 12);
     while(true) {
-        clock_t start_outer = clock();
-        int read_size = fread(read_buffer, 1, BUFFER, dataF);
-        printf("size %i\n", read_size);
+        
+        auto t1_read = high_resolution_clock::now();
+        int read_size = read64(data_chunk, dataF);
+        auto t2_read = high_resolution_clock::now();
+        duration<double, std::milli> r = t2_read - t1_read;
+        read_time += r.count();
         if(read_size == 0) break;
-        for(int i = 0; i < read_size / 16; i++) {
-            sscanf(read_buffer+ i * 16, "%16c", &data_chunk);
-            printf("Something %lx\n", data_chunk);
-            uint64_t res = mutate_data(data_chunk, encrypt);
-            sprintf(write_buffer + i * 16, "%016lx", res);
-        }
-        fwrite(write_buffer, 1, read_size, outHex);
+
+        auto t1 = high_resolution_clock::now();
+
+        uint64_t res = mutate_data(data_chunk, encrypt);
+
+        auto t2 = high_resolution_clock::now();
+        duration<double, std::milli> ms_double = t2 - t1;
+        mutuate_time += ms_double.count();
+        // fprintf(outHex, "%016lx", res);
+        inverse(res);
+        auto t1_write = high_resolution_clock::now();
+        fwrite(&res, 1, 8, outAs);
+        auto t2_write = high_resolution_clock::now();
+        duration<double, std::milli> wr = t2_write - t1_write;
+        write_time += wr.count();
     }
+    printf("Time taken mutate %f\n read %f\n write %f \n" , mutuate_time, read_time, write_time);
     printf("Operation Done!\n");
-    fclose(outHex);
+    // fclose(outHex);
     fclose(dataF);
 }
 
-
-
-// uint64_t toHex(char in[], int start) {
-//     uint64_t hex = 0;
-//     for(int i = 0; i < 16; ++i) {
-//         char cur = in[i + start];
-//         char convert = 0;
-//         if(cur >= '0' && cur <= '9') convert = (cur - '0');
-//         else if (cur >= 'a' && cur <= 'f') convert = (cur - 'a' + 10);
-//         else if (cur >= 'A' && cur <= 'F') convert = (cur - 'A' + 10);
-//         hex = (hex << 4) | convert;
-//     }
-//     return hex;
-// }
-// void startup3(const char data_location[], const char key_location[], const char output_enc_location[], bool encrypt) {
-
-//     FILE* keyF = fopen(key_location, "r");
-//     if(keyF == nullptr) {
-//         printf("Couldn't read key\n");
-//         return;
-//     };
-//     uint64_t key = 0;
-//     fscanf(keyF, "%lx", &key);
-//     fclose(keyF);
-
-//     generate_keys(key);
-
-//     uint64_t data_chunk = 0;
-//     FILE* dataF = fopen(data_location, "rb");
-
-//     if(dataF == nullptr) {
-//         printf("Couldn't read data\n");
-//         return;
-//     };
-
-    
-//     FILE* outF = fopen(output_location, "w");
-//     char read_buffer[BUFFER];
-//     char write_buffer[BUFFER];
-//     while(true) {
-//         clock_t start_outer = clock();
-//         int read_size = fread(read_buffer, 1, BUFFER, dataF);
-//         if(read_size == 0) break;
-//         for(int i = 0; i < read_size / 16; i++) {
-//             clock_t start_in = clock();
-//             data_chunk = toHex(read_buffer, i * 16);
-//             clock_t start = clock();
-//             uint64_t res = mutate_data(data_chunk, encrypt);
-//             clock_t end = clock();
-//             // printf("Time  mutate taken of mutate %lf\n", (float)(end - start) / CLOCKS_PER_SEC);
-//             sprintf(write_buffer + i * 16, "%016lx", res);
-//             clock_t end_in = clock();
-//             // printf("Time  inner loop %lf\n", (float)(end_in - start_in) / CLOCKS_PER_SEC);
-//         }
-//         fwrite(write_buffer, 1, read_size, outF);
-//         clock_t end_outer = clock();
-//         printf("Time  outer loop ------------------------------- %lf\n", (float)(end_outer - start_outer) / CLOCKS_PER_SEC);
-//     }
-//     printf("Operation Done!\n");
-//     fclose(outF);
-//     fclose(dataF);
-// }
 #include <string.h>
-int main(int argc, char* argv[]) {
 
+
+
+int main(int argc, char* argv[]) {
+    auto t1 = high_resolution_clock::now();
     const char* encrypt = (argc >= 2) ? argv[1] : "encrypt";
     const char* data = (argc >= 3) ? argv[2] : "plain.txt";
     const char* key = (argc >= 4) ? argv[3] : "key.txt";
@@ -377,4 +359,8 @@ int main(int argc, char* argv[]) {
     const char hex_out[] = "hex.txt";
     bool isEncrypt = strcmp(encrypt, "encrypt") == 0;
     startup2(data, key, (isEncrypt) ? encrypted_out : decrypted_out, hex_out, isEncrypt);
+    auto t2 = high_resolution_clock::now();
+    duration<double, std::milli> ms_double = t2 - t1;
+
+    printf("Time taken %f\n", ms_double.count());
 }
