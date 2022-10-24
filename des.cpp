@@ -2,14 +2,6 @@
 #include <stdio.h>
 #include <fstream>
 
-#include <chrono>
-using std::chrono::high_resolution_clock;
-    using std::chrono::duration_cast;
-    using std::chrono::duration;
-    using std::chrono::milliseconds;
-
-# define __rdtsc __builtin_ia32_rdtsc
-
 void print_hex(char test[], uint64_t binary) {
     
     printf("This is `%s`: %lX\n", test, binary);
@@ -154,42 +146,30 @@ void generate_keys(uint64_t& key) {
     for(int i = 0; i < 56; i++) {
         permuted_out =  (((key >> (64 - permuted_choice_1[i]) ) & ONE) | (permuted_out << 1));
     }
-    // print_hex("Permuted key 1", permuted_out);
 
     uint64_t left = permuted_out >> 28;
     uint64_t right = permuted_out & 0x000000000FFFFFFF;
 
-    // print_hex("left permu", left);
-    // print_hex("Right permu", right);
-
     for(int i = 0; i < 16; i++) {
         left = circular_shift(left, left_shifts[i], 28);
         right = circular_shift(right, left_shifts[i], 28);
-        // printf("LEFT no %i: %lX\n", i, left);
-        // printf("Right no %i: %lX\n", i, right);
 
         uint64_t concat_keys = (left << 28) | right;
-        // printf("Concat no %i: %lX\n", i, concat_keys);
         uint64_t final_key = 0;
         for(int j = 0; j < 48; j++) {
             final_key = ((( concat_keys >> (56 - permuted_choice_2[j]) ) & ONE) | (final_key << 1));
         }
-        // printf("Final Key %i: %lX\n", i, final_key);
         keys[i] = final_key;
     }
 }
-long long tot_cycles = 0;
-long long count = 0;
+#define BUFFER 1 << 21
+
 uint64_t feistel_cipher (uint64_t& in, uint64_t& key) {
     uint64_t expan_in = 0;
     for(int i = 0; i < 48; ++i) {
         expan_in = (((in >> 32 - expansion_table[i]) & ONE) | (expan_in << 1));
     }
-
-    // print_hex("right", in);
     expan_in ^= key;
-    // print_hex("Expansion", expan_in);
-    long long t1=__rdtsc();
 
     uint32_t s_box_output = 0;
     for(int i = 0; i < 8; ++i) {
@@ -197,13 +177,7 @@ uint64_t feistel_cipher (uint64_t& in, uint64_t& key) {
         uint8_t row = (((part & 0x20) >> 4) | (part & 1));
         uint8_t col = (part >> 1) & 0xF;
         s_box_output |= ( (uint64_t)s_box[i][(row << 4) | col] << (28 - i * 4));
-        // printf("row %lX, col %lX, part %lX\n", row, col, part);
-    }
-    long long t2=__rdtsc();
-    count++;
-    tot_cycles += t2 - t1;
-    // print_hex("s-box ", s_box_output);
-    
+    }    
     uint32_t out = 0;
     for(int i = 0; i < 32; ++i) {
         out = (((s_box_output >> 32 - f_permutaion[i]) & ONE) | (out << 1));
@@ -236,39 +210,7 @@ uint64_t mutate_data (uint64_t data, bool encrypt) {
     return final_out;
 }  
 
-// Main loop
-void startup(char data_location[], char key_location[], char output_location[], bool encrypt) {
 
-    FILE* keyF = fopen(key_location, "r");
-    if(keyF == nullptr) {
-        printf("Couldn't read key\n");
-        return;
-    };
-    uint64_t key = 0;
-    fscanf(keyF, "%lx", &key);
-    fclose(keyF);
-
-    generate_keys(key);
-
-    uint64_t data_chunk = 0;
-    FILE* dataF = fopen(data_location, "r");
-
-    if(dataF == nullptr) {
-        printf("Couldn't read data\n");
-        return;
-    };
-
-    FILE* outF = fopen(output_location, "wb");
-    while(fscanf(dataF, "%16lx", &data_chunk) != EOF) {
-        uint64_t res = mutate_data(data_chunk, encrypt);
-        fprintf(outF, "%016lx", res);
-    }
-    printf("Operation Done!\n");
-    fclose(outF);
-    fclose(dataF);
-}
-
-#define BUFFER 1 << 21
 
 unsigned char inner_buffer[8];
 int read64(uint64_t& data, FILE* file) {
@@ -289,7 +231,7 @@ void inverse(uint64_t& data) {
     data = rev;
 }
 
-void startup2(const char data_location[], const char key_location[], 
+void startup(const char data_location[], const char key_location[], 
     const char output_location[], const char output_hex_location[], bool encrypt) {
     FILE* keyF = fopen(key_location, "r");
     if(keyF == nullptr) {
@@ -312,41 +254,20 @@ void startup2(const char data_location[], const char key_location[],
         return;
     };
 
-    double mutuate_time = 0;
-    double read_time = 0;
-    double write_time = 0;
-
-    // FILE* outHex = fopen(output_hex_location, "w");
+    FILE* outHex;
+    if(encrypt) outHex = fopen(output_hex_location, "w");
     FILE* outAs = fopen(output_location, "wb");
     setvbuf(outAs, write_buffer, _IOFBF, 1 << 18);
     setvbuf(dataF, read_buffer, _IOFBF, 1 << 12);
     while(true) {
-        
-        auto t1_read = high_resolution_clock::now();
         int read_size = read64(data_chunk, dataF);
-        auto t2_read = high_resolution_clock::now();
-        duration<double, std::milli> r = t2_read - t1_read;
-        read_time += r.count();
         if(read_size == 0) break;
-
-        auto t1 = high_resolution_clock::now();
-
         uint64_t res = mutate_data(data_chunk, encrypt);
-
-        auto t2 = high_resolution_clock::now();
-        duration<double, std::milli> ms_double = t2 - t1;
-        mutuate_time += ms_double.count();
-        // fprintf(outHex, "%016lx", res);
+        if(encrypt) fprintf(outHex, "%016lx", res);
         inverse(res);
-        auto t1_write = high_resolution_clock::now();
         fwrite(&res, 1, 8, outAs);
-        auto t2_write = high_resolution_clock::now();
-        duration<double, std::milli> wr = t2_write - t1_write;
-        write_time += wr.count();
     }
-    printf("Time taken mutate %f\n read %f\n write %f \n" , mutuate_time, read_time, write_time);
-    printf("Operation Done!\n");
-    // fclose(outHex);
+    if(encrypt) fclose(outHex);
     fclose(dataF);
 }
 
@@ -355,7 +276,6 @@ void startup2(const char data_location[], const char key_location[],
 
 
 int main(int argc, char* argv[]) {
-    auto t1 = high_resolution_clock::now();
     const char* encrypt = (argc >= 2) ? argv[1] : "encrypt";
     const char* data = (argc >= 3) ? argv[2] : "plain.txt";
     const char* key = (argc >= 4) ? argv[3] : "key.txt";
@@ -363,9 +283,5 @@ int main(int argc, char* argv[]) {
     const char decrypted_out[] = "decrypt.txt";
     const char hex_out[] = "hex.txt";
     bool isEncrypt = strcmp(encrypt, "encrypt") == 0;
-    startup2(data, key, (isEncrypt) ? encrypted_out : decrypted_out, hex_out, isEncrypt);
-    auto t2 = high_resolution_clock::now();
-    duration<double, std::milli> ms_double = t2 - t1;
-    printf("Total cycles %lld %f\n", tot_cycles, tot_cycles*1.0 / count);
-    printf("Time taken %f\n", ms_double.count());
+    startup(data, key, (isEncrypt) ? encrypted_out : decrypted_out, hex_out, isEncrypt);
 }
